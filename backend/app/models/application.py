@@ -23,11 +23,14 @@ class JobApplication(db.Model):
     status = db.Column(db.Enum(ApplicationStatus), nullable=False, default=ApplicationStatus.APPLIED)
     applied_date = db.Column(db.Date, nullable=False)
     notes = db.Column(db.Text)
-    source = db.Column(db.String(100))  # e.g. LinkedIn, referral
+    source = db.Column(db.String(100))
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc),
-                           onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship("User", back_populates="applications")
-    status_history = db.relationship("StatusHistory", back_populates="application",
-                                     order_by="StatusHistory.changed_at")
+    status_history = db.relationship(
+        "StatusHistory",
+        back_populates="application",
+        order_by="StatusHistory.changed_at",
+        cascade="all, delete-orphan",
+    )

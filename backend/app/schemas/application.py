@@ -1,4 +1,8 @@
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, fields, validate, validates, ValidationError
+from app.models.application import ApplicationStatus
+
+
+VALID_STATUS_VALUES = [s.value for s in ApplicationStatus]
 
 
 class ApplicationCreateSchema(Schema):
@@ -20,7 +24,13 @@ class ApplicationUpdateSchema(Schema):
 
 
 class StatusTransitionSchema(Schema):
-    status = fields.Str(required=True)
+    status = fields.Str(
+        required=True,
+        validate=validate.OneOf(
+            VALID_STATUS_VALUES,
+            error="Invalid status. Must be one of: {choices}",
+        ),
+    )
 
 
 class StatusHistorySchema(Schema):

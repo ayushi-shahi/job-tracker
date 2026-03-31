@@ -30,13 +30,17 @@ def client(app):
 
 
 @pytest.fixture(scope="function")
-def auth_token(client):
-    client.post("/auth/register", json={
-        "email": "testuser@example.com",
+def auth_token(client, db):
+    """
+    Creates a fresh user per test function to avoid cross-test state.
+    Uses a counter stored on the fixture to generate unique emails.
+    """
+    import uuid
+    unique_email = f"testuser_{uuid.uuid4().hex[:8]}@example.com"
+
+    reg = client.post("/auth/register", json={
+        "email": unique_email,
         "password": "password123"
     })
-    response = client.post("/auth/login", json={
-        "email": "testuser@example.com",
-        "password": "password123"
-    })
-    return response.get_json()["token"]
+    assert reg.status_code == 201, f"Registration failed: {reg.get_json()}"
+    return reg.get_json()["token"]

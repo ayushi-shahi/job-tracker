@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 
@@ -6,6 +6,16 @@ const STATUSES = ["applied","screening","interview","offer","accepted","rejected
 const STATUS_COLORS = {
   applied:"#6366f1", screening:"#f59e0b", interview:"#3b82f6",
   offer:"#10b981", accepted:"#22c55e", rejected:"#ef4444"
+};
+
+// Mirrors the backend state machine — keeps the UI honest without an extra API call
+const VALID_TRANSITIONS = {
+  applied: ["screening", "rejected"],
+  screening: ["interview", "rejected"],
+  interview: ["offer", "rejected"],
+  offer: ["accepted", "rejected"],
+  accepted: [],
+  rejected: [],
 };
 
 export default function Dashboard() {
@@ -16,18 +26,32 @@ export default function Dashboard() {
   const [form, setForm] = useState({ company:"", role:"", location:"", applied_date:"", source:"", notes:"" });
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
+  const [fetchError, setFetchError] = useState("");
   const navigate = useNavigate();
 
-  useEffect(() => { fetchAll(); }, [filter]);
+  const handleAuthError = useCallback((err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem("token");
+      navigate("/login");
+    }
+  }, [navigate]);
 
-  async function fetchAll() {
-    const [appsRes, statsRes] = await Promise.all([
-      api.get("/applications" + (filter ? `?status=${filter}` : "")),
-      api.get("/applications/stats")
-    ]);
-    setApps(appsRes.data);
-    setStats(statsRes.data);
-  }
+  const fetchAll = useCallback(async () => {
+    setFetchError("");
+    try {
+      const [appsRes, statsRes] = await Promise.all([
+        api.get("/applications" + (filter ? `?status=${filter}` : "")),
+        api.get("/applications/stats")
+      ]);
+      setApps(appsRes.data);
+      setStats(statsRes.data);
+    } catch (err) {
+      handleAuthError(err);
+      setFetchError("Failed to load applications. Please refresh.");
+    }
+  }, [filter, handleAuthError]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -38,6 +62,7 @@ export default function Dashboard() {
       setForm({ company:"", role:"", location:"", applied_date:"", source:"", notes:"" });
       fetchAll();
     } catch (err) {
+      handleAuthError(err);
       setError(err.response?.data?.error || "Failed to create");
     }
   }
@@ -48,21 +73,29 @@ export default function Dashboard() {
       fetchAll();
       setSelected(null);
     } catch (err) {
+      handleAuthError(err);
       alert(err.response?.data?.error || "Transition failed");
     }
   }
 
   async function handleDelete(appId) {
     if (!confirm("Delete this application?")) return;
-    await api.delete(`/applications/${appId}`);
-    fetchAll();
-    setSelected(null);
+    try {
+      await api.delete(`/applications/${appId}`);
+      fetchAll();
+      setSelected(null);
+    } catch (err) {
+      handleAuthError(err);
+      alert(err.response?.data?.error || "Delete failed");
+    }
   }
 
   function logout() {
     localStorage.removeItem("token");
     navigate("/login");
   }
+
+  const allowedTransitions = selected ? VALID_TRANSITIONS[selected.status] ?? [] : [];
 
   return (
     <div style={styles.page}>
@@ -73,6 +106,8 @@ export default function Dashboard() {
           <button style={styles.btnGhost} onClick={logout}>Logout</button>
         </div>
       </div>
+
+      {fetchError && <p style={{color:"red", marginBottom:"1rem"}}>{fetchError}</p>}
 
       {stats && (
         <div style={styles.statsRow}>
@@ -132,12 +167,16 @@ export default function Dashboard() {
               ))}
             </ul>
             <h4>Transition Status</h4>
-            <div style={{display:"flex",flexWrap:"wrap",gap:"0.4rem"}}>
-              {STATUSES.map(s => (
-                <button key={s} style={{...styles.filterBtn, background:STATUS_COLORS[s], color:"white"}}
-                  onClick={() => handleTransition(selected.id, s)}>{s}</button>
-              ))}
-            </div>
+            {allowedTransitions.length === 0 ? (
+              <p style={{color:"#888", fontSize:"0.9rem"}}>No further transitions available — this application is in a terminal state.</p>
+            ) : (
+              <div style={{display:"flex",flexWrap:"wrap",gap:"0.4rem"}}>
+                {allowedTransitions.map(s => (
+                  <button key={s} style={{...styles.filterBtn, background:STATUS_COLORS[s], color:"white"}}
+                    onClick={() => handleTransition(selected.id, s)}>{s}</button>
+                ))}
+              </div>
+            )}
             <div style={{display:"flex",gap:"0.5rem",marginTop:"1rem"}}>
               <button style={{...styles.btnGhost,color:"red"}} onClick={() => handleDelete(selected.id)}>Delete</button>
               <button style={styles.btnGhost} onClick={() => setSelected(null)}>Close</button>
@@ -179,7 +218,7 @@ const styles = {
   badge: { padding:"0.2rem 0.6rem", borderRadius:"12px", color:"white", fontSize:"0.75rem", whiteSpace:"nowrap" },
   modal: { position:"fixed", top:0, left:0, right:0, bottom:0, background:"rgba(0,0,0,0.4)", display:"flex", justifyContent:"center", alignItems:"center", zIndex:100 },
   modalCard: { background:"white", borderRadius:"8px", padding:"1.5rem", width:"420px", maxHeight:"80vh", overflowY:"auto", boxShadow:"0 4px 20px rgba(0,0,0,0.15)" },
-  input: { display:"block", width:"100%", margin:"0.4rem 0", padding:"0.6rem", borderRadius:"4px", border:"1px solid #ccc", boxSizing:"border-box", fontFamily:"sans-serif" ,background:"white", color:"#333"},
+  input: { display:"block", width:"100%", margin:"0.4rem 0", padding:"0.6rem", borderRadius:"4px", border:"1px solid #ccc", boxSizing:"border-box", fontFamily:"sans-serif", background:"white", color:"#333"},
   btnPrimary: { padding:"0.6rem 1.2rem", background:"#4f46e5", color:"white", border:"none", borderRadius:"4px", cursor:"pointer" },
   btnGhost: { padding:"0.6rem 1.2rem", background:"white", color:"#333", border:"1px solid #ddd", borderRadius:"4px", cursor:"pointer" },
 };

@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import datetime, timezone
 from app.extensions import db
 from app.models.application import JobApplication, ApplicationStatus
 from app.models.status_history import StatusHistory
+from sqlalchemy import func
 
 # Valid transitions — the state machine
 VALID_TRANSITIONS = {
@@ -28,7 +29,6 @@ def create_application(user_id: int, data: dict) -> JobApplication:
     db.session.add(app)
     db.session.flush()  # get app.id before commit
 
-    # Record initial status in history
     history = StatusHistory(
         application_id=app.id,
         from_status=None,
@@ -59,10 +59,13 @@ def get_application(user_id: int, application_id: int) -> JobApplication:
 
 def update_application(user_id: int, application_id: int, data: dict) -> JobApplication:
     app = get_application(user_id, application_id)
+    if not data:
+        return app  # nothing to update — return early, don't hit the DB
     updatable = ["company", "role", "location", "notes", "source", "applied_date"]
     for field in updatable:
         if field in data:
             setattr(app, field, data[field])
+    app.updated_at = datetime.now(timezone.utc)  # manual update since ORM onupdate doesn't fire on setattr
     db.session.commit()
     return app
 
@@ -84,6 +87,7 @@ def transition_status(user_id: int, application_id: int, new_status_str: str) ->
 
     old_status = app.status
     app.status = new_status
+    app.updated_at = datetime.now(timezone.utc)
 
     history = StatusHistory(
         application_id=app.id,
@@ -102,8 +106,18 @@ def delete_application(user_id: int, application_id: int) -> None:
 
 
 def get_stats(user_id: int) -> dict:
-    applications = JobApplication.query.filter_by(user_id=user_id).all()
-    stats = {status.value: 0 for status in ApplicationStatus}
-    for app in applications:
-        stats[app.status.value] += 1
-    return {"total": len(applications), "by_status": stats}
+    # Use a SQL GROUP BY instead of loading all rows into Python
+    total = JobApplication.query.filter_by(user_id=user_id).count()
+
+    rows = (
+        db.session.query(JobApplication.status, func.count(JobApplication.id))
+        .filter(JobApplication.user_id == user_id)
+        .group_by(JobApplication.status)
+        .all()
+    )
+
+    by_status = {status.value: 0 for status in ApplicationStatus}
+    for status_enum, count in rows:
+        by_status[status_enum.value] = count
+
+    return {"total": total, "by_status": by_status}
